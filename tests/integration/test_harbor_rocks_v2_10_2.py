@@ -49,7 +49,7 @@ def test_harbor_chart_deployment(module_instance: harness.Instance):
             repo, tag = rmi.image.split(':')
             all_chart_value_overrides_args.extend([
                 "--set", f"{chart_section}.image.repository={repo}",
-                "--set", f"{chart_section}.image.version={tag}"
+                "--set", f"{chart_section}.image.tag={tag}"
             ])
             found_env_rocks_metadata.append(rmi.name)
 
