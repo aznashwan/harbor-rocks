@@ -17,7 +17,7 @@ LOG.addHandler(logging.StreamHandler(sys.stdout))
 
 
 IMAGE_NAME = "registry-photon"
-IMAGE_VERSIONS = ["v2.10.2"]
+IMAGE_VERSIONS = ["v2.9.3", "v2.10.2"]
 
 
 @pytest.mark.abort_on_fail
