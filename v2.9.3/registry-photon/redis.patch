@@ -1,205 +1,206 @@
 diff --git a/configuration/configuration.go b/configuration/configuration.go
-index 7076df85d4..3e74330321 100644
+index dd315485..a3e0818e 100644
 --- a/configuration/configuration.go
 +++ b/configuration/configuration.go
 @@ -168,6 +168,9 @@ type Configuration struct {
-        // Addr specifies the the redis instance available to the application.
-        Addr string `yaml:"addr,omitempty"`
- 
-+       // SentinelMasterSet specifies the the redis sentinel master set name.
-+       SentinelMasterSet string `yaml:"sentinelMasterSet,omitempty"`
+ 		// Addr specifies the the redis instance available to the application.
+ 		Addr string `yaml:"addr,omitempty"`
+
++		// SentinelMasterSet specifies the the redis sentinel master set name.
++		SentinelMasterSet string `yaml:"sentinelMasterSet,omitempty"`
 +
-        // Password string to use when making a connection.
-        Password string `yaml:"password,omitempty"`
- 
+ 		// Password string to use when making a connection.
+ 		Password string `yaml:"password,omitempty"`
+
 diff --git a/registry/handlers/app.go b/registry/handlers/app.go
-index bf56cea22a..4a7cee9a2e 100644
+index 8a30bd4d..4e9cec34 100644
 --- a/registry/handlers/app.go
 +++ b/registry/handlers/app.go
 @@ -3,6 +3,7 @@ package handlers
  import (
-    "context"
-    "crypto/rand"
-+   "errors"
-    "expvar"
-    "fmt"
-    "math"
-@@ -16,6 +17,7 @@ import (
-    "strings"
-    "time"
- 
-+   "github.com/FZambia/sentinel"
-    "github.com/distribution/reference"
-    "github.com/docker/distribution"
-    "github.com/docker/distribution/configuration"
-@@ -499,6 +501,45 @@ func (app *App) configureRedis(configuration *configuration.Configuration) {
-        return
-    }
- 
-+   var getRedisAddr func() (string, error)
-+   var testOnBorrow func(c redis.Conn, t time.Time) error
-+   if configuration.Redis.SentinelMasterSet != "" {
-+       sntnl := &sentinel.Sentinel{
-+           Addrs:      strings.Split(configuration.Redis.Addr, ","),
-+           MasterName: configuration.Redis.SentinelMasterSet,
-+           Dial: func(addr string) (redis.Conn, error) {
-+               c, err := redis.DialTimeout("tcp", addr,
-+                   configuration.Redis.DialTimeout,
-+                   configuration.Redis.ReadTimeout,
-+                   configuration.Redis.WriteTimeout)
-+               if err != nil {
-+                   return nil, err
-+               }
-+               return c, nil
-+           },
-+       }
-+       getRedisAddr = func() (string, error) {
-+           return sntnl.MasterAddr()
-+       }
-+       testOnBorrow = func(c redis.Conn, t time.Time) error {
-+           if !sentinel.TestRole(c, "master") {
-+               return errors.New("role check failed")
-+           }
-+           return nil
-+       }
+ 	"context"
+ 	"crypto/rand"
++	"errors"
+ 	"expvar"
+ 	"fmt"
+ 	"math"
+@@ -16,6 +17,8 @@ import (
+ 	"strings"
+ 	"time"
+
++	"github.com/FZambia/sentinel"
 +
-+   } else {
-+       getRedisAddr = func() (string, error) {
-+           return configuration.Redis.Addr, nil
-+       }
-+       testOnBorrow = func(c redis.Conn, t time.Time) error {
-+           // TODO(stevvooe): We can probably do something more interesting
-+           // here with the health package.
-+           _, err := c.Do("PING")
-+           return err
-+       }
-+   }
+ 	"github.com/docker/distribution"
+ 	"github.com/docker/distribution/configuration"
+ 	dcontext "github.com/docker/distribution/context"
+@@ -499,6 +502,44 @@ func (app *App) configureRedis(configuration *configuration.Configuration) {
+ 		return
+ 	}
+
++	var getRedisAddr func() (string, error)
++	var testOnBorrow func(c redis.Conn, t time.Time) error
++	if configuration.Redis.SentinelMasterSet != "" {
++		sntnl := &sentinel.Sentinel{
++			Addrs:      strings.Split(configuration.Redis.Addr, ","),
++			MasterName: configuration.Redis.SentinelMasterSet,
++			Dial: func(addr string) (redis.Conn, error) {
++				c, err := redis.DialTimeout("tcp", addr,
++					configuration.Redis.DialTimeout,
++					configuration.Redis.ReadTimeout,
++					configuration.Redis.WriteTimeout)
++				if err != nil {
++					return nil, err
++				}
++				return c, nil
++			},
++		}
++		getRedisAddr = func() (string, error) {
++			return sntnl.MasterAddr()
++		}
++		testOnBorrow = func(c redis.Conn, t time.Time) error {
++			if !sentinel.TestRole(c, "master") {
++				return errors.New("role check failed")
++			}
++			return nil
++		}
 +
-    pool := &redis.Pool{
-        Dial: func() (redis.Conn, error) {
-            // TODO(stevvooe): Yet another use case for contextual timing.
++	} else {
++		getRedisAddr = func() (string, error) {
++			return configuration.Redis.Addr, nil
++		}
++		testOnBorrow = func(c redis.Conn, t time.Time) error {
++			// TODO(stevvooe): We can probably do something more interesting
++			// here with the health package.
++			_, err := c.Do("PING")
++			return err
++		}
++	}
+ 	pool := &redis.Pool{
+ 		Dial: func() (redis.Conn, error) {
+ 			// TODO(stevvooe): Yet another use case for contextual timing.
 @@ -514,8 +555,11 @@ func (app *App) configureRedis(configuration *configuration.Configuration) {
-                }
-            }
- 
--           conn, err := redis.DialTimeout("tcp",
--               configuration.Redis.Addr,
-+           redisAddr, err := getRedisAddr()
-+           if err != nil {
-+               return nil, err
-+           }
-+           conn, err := redis.DialTimeout("tcp", redisAddr,
-                configuration.Redis.DialTimeout,
-                configuration.Redis.ReadTimeout,
-                configuration.Redis.WriteTimeout)
+ 				}
+ 			}
+
+-			conn, err := redis.DialTimeout("tcp",
+-				configuration.Redis.Addr,
++			redisAddr, err := getRedisAddr()
++			if err != nil {
++				return nil, err
++			}
++			conn, err := redis.DialTimeout("tcp", redisAddr,
+ 				configuration.Redis.DialTimeout,
+ 				configuration.Redis.ReadTimeout,
+ 				configuration.Redis.WriteTimeout)
 @@ -547,16 +591,11 @@ func (app *App) configureRedis(configuration *configuration.Configuration) {
-            done(nil)
-            return conn, nil
-        },
--       MaxIdle:     configuration.Redis.Pool.MaxIdle,
--       MaxActive:   configuration.Redis.Pool.MaxActive,
--       IdleTimeout: configuration.Redis.Pool.IdleTimeout,
--       TestOnBorrow: func(c redis.Conn, t time.Time) error {
--           // TODO(stevvooe): We can probably do something more interesting
--           // here with the health package.
--           _, err := c.Do("PING")
--           return err
--       },
--       Wait: false, // if a connection is not available, proceed without cache.
-+       MaxIdle:      configuration.Redis.Pool.MaxIdle,
-+       MaxActive:    configuration.Redis.Pool.MaxActive,
-+       IdleTimeout:  configuration.Redis.Pool.IdleTimeout,
-+       TestOnBorrow: testOnBorrow,
-+       Wait:         false, // if a connection is not available, proceed without cache.
-    }
- 
-    app.redis = pool
+ 			done(nil)
+ 			return conn, nil
+ 		},
+-		MaxIdle:     configuration.Redis.Pool.MaxIdle,
+-		MaxActive:   configuration.Redis.Pool.MaxActive,
+-		IdleTimeout: configuration.Redis.Pool.IdleTimeout,
+-		TestOnBorrow: func(c redis.Conn, t time.Time) error {
+-			// TODO(stevvooe): We can probably do something more interesting
+-			// here with the health package.
+-			_, err := c.Do("PING")
+-			return err
+-		},
+-		Wait: false, // if a connection is not available, proceed without cache.
++		MaxIdle:      configuration.Redis.Pool.MaxIdle,
++		MaxActive:    configuration.Redis.Pool.MaxActive,
++		IdleTimeout:  configuration.Redis.Pool.IdleTimeout,
++		TestOnBorrow: testOnBorrow,
++		Wait:         false, // if a connection is not available, proceed without cache.
+ 	}
+
+ 	app.redis = pool
 diff --git a/registry/handlers/app_test.go b/registry/handlers/app_test.go
-index 60a57e6c15..8a644d83d8 100644
+index 60a57e6c..8a644d83 100644
 --- a/registry/handlers/app_test.go
 +++ b/registry/handlers/app_test.go
 @@ -140,7 +140,29 @@ func TestAppDispatcher(t *testing.T) {
  // TestNewApp covers the creation of an application via NewApp with a
  // configuration.
  func TestNewApp(t *testing.T) {
--   ctx := context.Background()
+-	ctx := context.Background()
 +
-+   config := configuration.Configuration{
-+       Storage: configuration.Storage{
-+           "testdriver": nil,
-+           "maintenance": configuration.Parameters{"uploadpurging": map[interface{}]interface{}{
-+               "enabled": false,
-+           }},
-+       },
-+       Auth: configuration.Auth{
-+           // For now, we simply test that new auth results in a viable
-+           // application.
-+           "silly": {
-+               "realm":   "realm-test",
-+               "service": "service-test",
-+           },
-+       },
-+   }
-+   runAppWithConfig(t, config)
++	config := configuration.Configuration{
++		Storage: configuration.Storage{
++			"testdriver": nil,
++			"maintenance": configuration.Parameters{"uploadpurging": map[interface{}]interface{}{
++				"enabled": false,
++			}},
++		},
++		Auth: configuration.Auth{
++			// For now, we simply test that new auth results in a viable
++			// application.
++			"silly": {
++				"realm":   "realm-test",
++				"service": "service-test",
++			},
++		},
++	}
++	runAppWithConfig(t, config)
 +}
 +
 +// TestNewApp covers the creation of an application via NewApp with a
 +// configuration(with redis).
 +func TestNewAppWithRedis(t *testing.T) {
-    config := configuration.Configuration{
-        Storage: configuration.Storage{
-            "testdriver": nil,
+ 	config := configuration.Configuration{
+ 		Storage: configuration.Storage{
+ 			"testdriver": nil,
 @@ -157,7 +179,38 @@ func TestNewApp(t *testing.T) {
-            },
-        },
-    }
-+   config.Redis.Addr = "127.0.0.1:6379"
-+   config.Redis.DB = 0
-+   runAppWithConfig(t, config)
+ 			},
+ 		},
+ 	}
++	config.Redis.Addr = "127.0.0.1:6379"
++	config.Redis.DB = 0
++	runAppWithConfig(t, config)
 +}
- 
+
 +// TestNewApp covers the creation of an application via NewApp with a
 +// configuration(with redis sentinel cluster).
 +func TestNewAppWithRedisSentinelCluster(t *testing.T) {
-+   config := configuration.Configuration{
-+       Storage: configuration.Storage{
-+           "testdriver": nil,
-+           "maintenance": configuration.Parameters{"uploadpurging": map[interface{}]interface{}{
-+               "enabled": false,
-+           }},
-+       },
-+       Auth: configuration.Auth{
-+           // For now, we simply test that new auth results in a viable
-+           // application.
-+           "silly": {
-+               "realm":   "realm-test",
-+               "service": "service-test",
-+           },
-+       },
-+   }
-+   config.Redis.Addr = "192.168.0.11:26379,192.168.0.12:26379"
-+   config.Redis.DB = 0
-+   config.Redis.SentinelMasterSet = "mymaster"
-+   runAppWithConfig(t, config)
++	config := configuration.Configuration{
++		Storage: configuration.Storage{
++			"testdriver": nil,
++			"maintenance": configuration.Parameters{"uploadpurging": map[interface{}]interface{}{
++				"enabled": false,
++			}},
++		},
++		Auth: configuration.Auth{
++			// For now, we simply test that new auth results in a viable
++			// application.
++			"silly": {
++				"realm":   "realm-test",
++				"service": "service-test",
++			},
++		},
++	}
++	config.Redis.Addr = "192.168.0.11:26379,192.168.0.12:26379"
++	config.Redis.DB = 0
++	config.Redis.SentinelMasterSet = "mymaster"
++	runAppWithConfig(t, config)
 +}
 +
 +func runAppWithConfig(t *testing.T, config configuration.Configuration) {
-+   ctx := context.Background()
-    // Mostly, with this test, given a sane configuration, we are simply
-    // ensuring that NewApp doesn't panic. We might want to tweak this
-    // behavior.
++	ctx := context.Background()
+ 	// Mostly, with this test, given a sane configuration, we are simply
+ 	// ensuring that NewApp doesn't panic. We might want to tweak this
+ 	// behavior.
 diff --git a/vendor.conf b/vendor.conf
-index 33fe616b76..a8d8f58bc6 100644
+index bd1b4bff..a45ac137 100644
 --- a/vendor.conf
 +++ b/vendor.conf
-@@ -51,3 +51,4 @@ gopkg.in/yaml.v2 v2.2.1
+@@ -49,3 +49,4 @@ gopkg.in/yaml.v2 v2.2.1
  rsc.io/letsencrypt e770c10b0f1a64775ae91d240407ce00d1a5bdeb https://github.com/dmcgowan/letsencrypt.git
- github.com/opencontainers/go-digest ea51bea511f75cfa3ef6098cc253c5c3609b037a # v1.0.0
+ github.com/opencontainers/go-digest a6d0ee40d4207ea02364bd3b9e8e77b9159ba1eb
  github.com/opencontainers/image-spec 67d2d5658fe0476ab9bf414cec164077ebff3920 # v1.0.2
 +github.com/FZambia/sentinel 5585739eb4b6478aa30161866ccf9ce0ef5847c7 https://github.com/jeremyxu2010/sentinel.git
+\ No newline at end of file
 diff --git a/vendor/github.com/FZambia/sentinel/LICENSE b/vendor/github.com/FZambia/sentinel/LICENSE
 new file mode 100644
-index 0000000000..8dada3edaf
+index 00000000..9c8f3ea0
 --- /dev/null
 +++ b/vendor/github.com/FZambia/sentinel/LICENSE
 @@ -0,0 +1,201 @@
@@ -404,9 +405,10 @@ index 0000000000..8dada3edaf
 +   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 +   See the License for the specific language governing permissions and
 +   limitations under the License.
+\ No newline at end of file
 diff --git a/vendor/github.com/FZambia/sentinel/README.md b/vendor/github.com/FZambia/sentinel/README.md
 new file mode 100644
-index 0000000000..f544c54ef6
+index 00000000..fc810435
 --- /dev/null
 +++ b/vendor/github.com/FZambia/sentinel/README.md
 @@ -0,0 +1,39 @@
@@ -449,23 +451,24 @@ index 0000000000..f544c54ef6
 +-------
 +
 +Library is available under the [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0.html).
+\ No newline at end of file
 diff --git a/vendor/github.com/FZambia/sentinel/sentinel.go b/vendor/github.com/FZambia/sentinel/sentinel.go
 new file mode 100644
-index 0000000000..79209e9f0d
+index 00000000..98dea26d
 --- /dev/null
 +++ b/vendor/github.com/FZambia/sentinel/sentinel.go
 @@ -0,0 +1,426 @@
 +package sentinel
 +
 +import (
-+   "errors"
-+   "fmt"
-+   "net"
-+   "strings"
-+   "sync"
-+   "time"
++	"errors"
++	"fmt"
++	"net"
++	"strings"
++	"sync"
++	"time"
 +
-+   "github.com/garyburd/redigo/redis"
++	"github.com/garyburd/redigo/redis"
 +)
 +
 +// Sentinel provides a way to add high availability (HA) to Redis Pool using
@@ -477,79 +480,79 @@ index 0000000000..79209e9f0d
 +// Example of the simplest usage to contact master "mymaster":
 +//
 +//  func newSentinelPool() *redis.Pool {
-+//     sntnl := &sentinel.Sentinel{
-+//         Addrs:      []string{":26379", ":26380", ":26381"},
-+//         MasterName: "mymaster",
-+//         Dial: func(addr string) (redis.Conn, error) {
-+//             timeout := 500 * time.Millisecond
-+//             c, err := redis.DialTimeout("tcp", addr, timeout, timeout, timeout)
-+//             if err != nil {
-+//                 return nil, err
-+//             }
-+//             return c, nil
-+//         },
-+//     }
-+//     return &redis.Pool{
-+//         MaxIdle:     3,
-+//         MaxActive:   64,
-+//         Wait:        true,
-+//         IdleTimeout: 240 * time.Second,
-+//         Dial: func() (redis.Conn, error) {
-+//             masterAddr, err := sntnl.MasterAddr()
-+//             if err != nil {
-+//                 return nil, err
-+//             }
-+//             c, err := redis.Dial("tcp", masterAddr)
-+//             if err != nil {
-+//                 return nil, err
-+//             }
-+//             return c, nil
-+//         },
-+//         TestOnBorrow: func(c redis.Conn, t time.Time) error {
-+//             if !sentinel.TestRole(c, "master") {
-+//                 return errors.New("Role check failed")
-+//             } else {
-+//                 return nil
-+//             }
-+//         },
-+//     }
++//  	sntnl := &sentinel.Sentinel{
++//  		Addrs:      []string{":26379", ":26380", ":26381"},
++//  		MasterName: "mymaster",
++//  		Dial: func(addr string) (redis.Conn, error) {
++//  			timeout := 500 * time.Millisecond
++//  			c, err := redis.DialTimeout("tcp", addr, timeout, timeout, timeout)
++//  			if err != nil {
++//  				return nil, err
++//  			}
++//  			return c, nil
++//  		},
++//  	}
++//  	return &redis.Pool{
++//  		MaxIdle:     3,
++//  		MaxActive:   64,
++//  		Wait:        true,
++//  		IdleTimeout: 240 * time.Second,
++//  		Dial: func() (redis.Conn, error) {
++//  			masterAddr, err := sntnl.MasterAddr()
++//  			if err != nil {
++//  				return nil, err
++//  			}
++//  			c, err := redis.Dial("tcp", masterAddr)
++//  			if err != nil {
++//  				return nil, err
++//  			}
++//  			return c, nil
++//  		},
++//  		TestOnBorrow: func(c redis.Conn, t time.Time) error {
++//  			if !sentinel.TestRole(c, "master") {
++//  				return errors.New("Role check failed")
++//  			} else {
++//  				return nil
++//  			}
++//  		},
++//  	}
 +//  }
 +type Sentinel struct {
-+   // Addrs is a slice with known Sentinel addresses.
-+   Addrs []string
++	// Addrs is a slice with known Sentinel addresses.
++	Addrs []string
 +
-+   // MasterName is a name of Redis master Sentinel servers monitor.
-+   MasterName string
++	// MasterName is a name of Redis master Sentinel servers monitor.
++	MasterName string
 +
-+   // Dial is a user supplied function to connect to Sentinel on given address. This
-+   // address will be chosen from Addrs slice.
-+   // Note that as per the redis-sentinel client guidelines, a timeout is mandatory
-+   // while connecting to Sentinels, and should not be set to 0.
-+   Dial func(addr string) (redis.Conn, error)
++	// Dial is a user supplied function to connect to Sentinel on given address. This
++	// address will be chosen from Addrs slice.
++	// Note that as per the redis-sentinel client guidelines, a timeout is mandatory
++	// while connecting to Sentinels, and should not be set to 0.
++	Dial func(addr string) (redis.Conn, error)
 +
-+   // Pool is a user supplied function returning custom connection pool to Sentinel.
-+   // This can be useful to tune options if you are not satisfied with what default
-+   // Sentinel pool offers. See defaultPool() method for default pool implementation.
-+   // In most cases you only need to provide Dial function and let this be nil.
-+   Pool func(addr string) *redis.Pool
++	// Pool is a user supplied function returning custom connection pool to Sentinel.
++	// This can be useful to tune options if you are not satisfied with what default
++	// Sentinel pool offers. See defaultPool() method for default pool implementation.
++	// In most cases you only need to provide Dial function and let this be nil.
++	Pool func(addr string) *redis.Pool
 +
-+   mu    sync.RWMutex
-+   pools map[string]*redis.Pool
-+   addr  string
++	mu    sync.RWMutex
++	pools map[string]*redis.Pool
++	addr  string
 +}
 +
 +// NoSentinelsAvailable is returned when all sentinels in the list are exhausted
 +// (or none configured), and contains the last error returned by Dial (which
 +// may be nil)
 +type NoSentinelsAvailable struct {
-+   lastError error
++	lastError error
 +}
 +
 +func (ns NoSentinelsAvailable) Error() string {
-+   if ns.lastError != nil {
-+       return fmt.Sprintf("redigo: no sentinels available; last error: %s", ns.lastError.Error())
-+   }
-+   return fmt.Sprintf("redigo: no sentinels available")
++	if ns.lastError != nil {
++		return fmt.Sprintf("redigo: no sentinels available; last error: %s", ns.lastError.Error())
++	}
++	return fmt.Sprintf("redigo: no sentinels available")
 +}
 +
 +// putToTop puts Sentinel address to the top of address list - this means
@@ -564,19 +567,19 @@ index 0000000000..79209e9f0d
 +//
 +// Lock must be held by caller.
 +func (s *Sentinel) putToTop(addr string) {
-+   addrs := s.Addrs
-+   if addrs[0] == addr {
-+       // Already on top.
-+       return
-+   }
-+   newAddrs := []string{addr}
-+   for _, a := range addrs {
-+       if a == addr {
-+           continue
-+       }
-+       newAddrs = append(newAddrs, a)
-+   }
-+   s.Addrs = newAddrs
++	addrs := s.Addrs
++	if addrs[0] == addr {
++		// Already on top.
++		return
++	}
++	newAddrs := []string{addr}
++	for _, a := range addrs {
++		if a == addr {
++			continue
++		}
++		newAddrs = append(newAddrs, a)
++	}
++	s.Addrs = newAddrs
 +}
 +
 +// putToBottom puts Sentinel address to the bottom of address list.
@@ -585,175 +588,175 @@ index 0000000000..79209e9f0d
 +//
 +// Lock must be held by caller.
 +func (s *Sentinel) putToBottom(addr string) {
-+   addrs := s.Addrs
-+   if addrs[len(addrs)-1] == addr {
-+       // Already on bottom.
-+       return
-+   }
-+   newAddrs := []string{}
-+   for _, a := range addrs {
-+       if a == addr {
-+           continue
-+       }
-+       newAddrs = append(newAddrs, a)
-+   }
-+   newAddrs = append(newAddrs, addr)
-+   s.Addrs = newAddrs
++	addrs := s.Addrs
++	if addrs[len(addrs)-1] == addr {
++		// Already on bottom.
++		return
++	}
++	newAddrs := []string{}
++	for _, a := range addrs {
++		if a == addr {
++			continue
++		}
++		newAddrs = append(newAddrs, a)
++	}
++	newAddrs = append(newAddrs, addr)
++	s.Addrs = newAddrs
 +}
 +
 +// defaultPool returns a connection pool to one Sentinel. This allows
 +// us to call concurrent requests to Sentinel using connection Do method.
 +func (s *Sentinel) defaultPool(addr string) *redis.Pool {
-+   return &redis.Pool{
-+       MaxIdle:     3,
-+       MaxActive:   10,
-+       Wait:        true,
-+       IdleTimeout: 240 * time.Second,
-+       Dial: func() (redis.Conn, error) {
-+           return s.Dial(addr)
-+       },
-+       TestOnBorrow: func(c redis.Conn, t time.Time) error {
-+           _, err := c.Do("PING")
-+           return err
-+       },
-+   }
++	return &redis.Pool{
++		MaxIdle:     3,
++		MaxActive:   10,
++		Wait:        true,
++		IdleTimeout: 240 * time.Second,
++		Dial: func() (redis.Conn, error) {
++			return s.Dial(addr)
++		},
++		TestOnBorrow: func(c redis.Conn, t time.Time) error {
++			_, err := c.Do("PING")
++			return err
++		},
++	}
 +}
 +
 +func (s *Sentinel) get(addr string) redis.Conn {
-+   pool := s.poolForAddr(addr)
-+   return pool.Get()
++	pool := s.poolForAddr(addr)
++	return pool.Get()
 +}
 +
 +func (s *Sentinel) poolForAddr(addr string) *redis.Pool {
-+   s.mu.Lock()
-+   if s.pools == nil {
-+       s.pools = make(map[string]*redis.Pool)
-+   }
-+   pool, ok := s.pools[addr]
-+   if ok {
-+       s.mu.Unlock()
-+       return pool
-+   }
-+   s.mu.Unlock()
-+   newPool := s.newPool(addr)
-+   s.mu.Lock()
-+   p, ok := s.pools[addr]
-+   if ok {
-+       s.mu.Unlock()
-+       return p
-+   }
-+   s.pools[addr] = newPool
-+   s.mu.Unlock()
-+   return newPool
++	s.mu.Lock()
++	if s.pools == nil {
++		s.pools = make(map[string]*redis.Pool)
++	}
++	pool, ok := s.pools[addr]
++	if ok {
++		s.mu.Unlock()
++		return pool
++	}
++	s.mu.Unlock()
++	newPool := s.newPool(addr)
++	s.mu.Lock()
++	p, ok := s.pools[addr]
++	if ok {
++		s.mu.Unlock()
++		return p
++	}
++	s.pools[addr] = newPool
++	s.mu.Unlock()
++	return newPool
 +}
 +
 +func (s *Sentinel) newPool(addr string) *redis.Pool {
-+   if s.Pool != nil {
-+       return s.Pool(addr)
-+   }
-+   return s.defaultPool(addr)
++	if s.Pool != nil {
++		return s.Pool(addr)
++	}
++	return s.defaultPool(addr)
 +}
 +
 +// close connection pool to Sentinel.
 +// Lock must be hold by caller.
 +func (s *Sentinel) close() {
-+   if s.pools != nil {
-+       for _, pool := range s.pools {
-+           pool.Close()
-+       }
-+   }
-+   s.pools = nil
++	if s.pools != nil {
++		for _, pool := range s.pools {
++			pool.Close()
++		}
++	}
++	s.pools = nil
 +}
 +
 +func (s *Sentinel) doUntilSuccess(f func(redis.Conn) (interface{}, error)) (interface{}, error) {
-+   s.mu.RLock()
-+   addrs := s.Addrs
-+   s.mu.RUnlock()
++	s.mu.RLock()
++	addrs := s.Addrs
++	s.mu.RUnlock()
 +
-+   var lastErr error
++	var lastErr error
 +
-+   for _, addr := range addrs {
-+       conn := s.get(addr)
-+       reply, err := f(conn)
-+       conn.Close()
-+       if err != nil {
-+           lastErr = err
-+           s.mu.Lock()
-+           pool, ok := s.pools[addr]
-+           if ok {
-+               pool.Close()
-+               delete(s.pools, addr)
-+           }
-+           s.putToBottom(addr)
-+           s.mu.Unlock()
-+           continue
-+       }
-+       s.putToTop(addr)
-+       return reply, nil
-+   }
++	for _, addr := range addrs {
++		conn := s.get(addr)
++		reply, err := f(conn)
++		conn.Close()
++		if err != nil {
++			lastErr = err
++			s.mu.Lock()
++			pool, ok := s.pools[addr]
++			if ok {
++				pool.Close()
++				delete(s.pools, addr)
++			}
++			s.putToBottom(addr)
++			s.mu.Unlock()
++			continue
++		}
++		s.putToTop(addr)
++		return reply, nil
++	}
 +
-+   return nil, NoSentinelsAvailable{lastError: lastErr}
++	return nil, NoSentinelsAvailable{lastError: lastErr}
 +}
 +
 +// MasterAddr returns an address of current Redis master instance.
 +func (s *Sentinel) MasterAddr() (string, error) {
-+   res, err := s.doUntilSuccess(func(c redis.Conn) (interface{}, error) {
-+       return queryForMaster(c, s.MasterName)
-+   })
-+   if err != nil {
-+       return "", err
-+   }
-+   return res.(string), nil
++	res, err := s.doUntilSuccess(func(c redis.Conn) (interface{}, error) {
++		return queryForMaster(c, s.MasterName)
++	})
++	if err != nil {
++		return "", err
++	}
++	return res.(string), nil
 +}
 +
 +// SlaveAddrs returns a slice with known slave addresses of current master instance.
 +func (s *Sentinel) SlaveAddrs() ([]string, error) {
-+   res, err := s.doUntilSuccess(func(c redis.Conn) (interface{}, error) {
-+       return queryForSlaveAddrs(c, s.MasterName)
-+   })
-+   if err != nil {
-+       return nil, err
-+   }
-+   return res.([]string), nil
++	res, err := s.doUntilSuccess(func(c redis.Conn) (interface{}, error) {
++		return queryForSlaveAddrs(c, s.MasterName)
++	})
++	if err != nil {
++		return nil, err
++	}
++	return res.([]string), nil
 +}
 +
 +// Slave represents a Redis slave instance which is known by Sentinel.
 +type Slave struct {
-+   ip    string
-+   port  string
-+   flags string
++	ip    string
++	port  string
++	flags string
 +}
 +
 +// Addr returns an address of slave.
 +func (s *Slave) Addr() string {
-+   return net.JoinHostPort(s.ip, s.port)
++	return net.JoinHostPort(s.ip, s.port)
 +}
 +
 +// Available returns if slave is in working state at moment based on information in slave flags.
 +func (s *Slave) Available() bool {
-+   return !strings.Contains(s.flags, "disconnected") && !strings.Contains(s.flags, "s_down")
++	return !strings.Contains(s.flags, "disconnected") && !strings.Contains(s.flags, "s_down")
 +}
 +
 +// Slaves returns a slice with known slaves of master instance.
 +func (s *Sentinel) Slaves() ([]*Slave, error) {
-+   res, err := s.doUntilSuccess(func(c redis.Conn) (interface{}, error) {
-+       return queryForSlaves(c, s.MasterName)
-+   })
-+   if err != nil {
-+       return nil, err
-+   }
-+   return res.([]*Slave), nil
++	res, err := s.doUntilSuccess(func(c redis.Conn) (interface{}, error) {
++		return queryForSlaves(c, s.MasterName)
++	})
++	if err != nil {
++		return nil, err
++	}
++	return res.([]*Slave), nil
 +}
 +
 +// SentinelAddrs returns a slice of known Sentinel addresses Sentinel server aware of.
 +func (s *Sentinel) SentinelAddrs() ([]string, error) {
-+   res, err := s.doUntilSuccess(func(c redis.Conn) (interface{}, error) {
-+       return queryForSentinels(c, s.MasterName)
-+   })
-+   if err != nil {
-+       return nil, err
-+   }
-+   return res.([]string), nil
++	res, err := s.doUntilSuccess(func(c redis.Conn) (interface{}, error) {
++		return queryForSentinels(c, s.MasterName)
++	})
++	if err != nil {
++		return nil, err
++	}
++	return res.([]string), nil
 +}
 +
 +// Discover allows to update list of known Sentinel addresses. From docs:
@@ -762,26 +765,26 @@ index 0000000000..79209e9f0d
 +// 1) Obtain a list of other Sentinels for this master using the command SENTINEL sentinels <master-name>.
 +// 2) Add every ip:port pair not already existing in our list at the end of the list.
 +func (s *Sentinel) Discover() error {
-+   addrs, err := s.SentinelAddrs()
-+   if err != nil {
-+       return err
-+   }
-+   s.mu.Lock()
-+   for _, addr := range addrs {
-+       if !stringInSlice(addr, s.Addrs) {
-+           s.Addrs = append(s.Addrs, addr)
-+       }
-+   }
-+   s.mu.Unlock()
-+   return nil
++	addrs, err := s.SentinelAddrs()
++	if err != nil {
++		return err
++	}
++	s.mu.Lock()
++	for _, addr := range addrs {
++		if !stringInSlice(addr, s.Addrs) {
++			s.Addrs = append(s.Addrs, addr)
++		}
++	}
++	s.mu.Unlock()
++	return nil
 +}
 +
 +// Close closes current connection to Sentinel.
 +func (s *Sentinel) Close() error {
-+   s.mu.Lock()
-+   s.close()
-+   s.mu.Unlock()
-+   return nil
++	s.mu.Lock()
++	s.close()
++	s.mu.Unlock()
++	return nil
 +}
 +
 +// TestRole wraps GetRole in a test to verify if the role matches an expected
@@ -790,94 +793,94 @@ index 0000000000..79209e9f0d
 +// It's not goroutine safe, but if you call this method on pooled connections
 +// then you are OK.
 +func TestRole(c redis.Conn, expectedRole string) bool {
-+   role, err := getRole(c)
-+   if err != nil || role != expectedRole {
-+       return false
-+   }
-+   return true
++	role, err := getRole(c)
++	if err != nil || role != expectedRole {
++		return false
++	}
++	return true
 +}
 +
 +// getRole is a convenience function supplied to query an instance (master or
 +// slave) for its role. It attempts to use the ROLE command introduced in
 +// redis 2.8.12.
 +func getRole(c redis.Conn) (string, error) {
-+   res, err := c.Do("ROLE")
-+   if err != nil {
-+       return "", err
-+   }
-+   rres, ok := res.([]interface{})
-+   if ok {
-+       return redis.String(rres[0], nil)
-+   }
-+   return "", errors.New("redigo: can not transform ROLE reply to string")
++	res, err := c.Do("ROLE")
++	if err != nil {
++		return "", err
++	}
++	rres, ok := res.([]interface{})
++	if ok {
++		return redis.String(rres[0], nil)
++	}
++	return "", errors.New("redigo: can not transform ROLE reply to string")
 +}
 +
 +func queryForMaster(conn redis.Conn, masterName string) (string, error) {
-+   res, err := redis.Strings(conn.Do("SENTINEL", "get-master-addr-by-name", masterName))
-+   if err != nil {
-+       return "", err
-+   }
-+   if len(res) < 2 {
-+       return "", errors.New("redigo: malformed get-master-addr-by-name reply")
-+   }
-+   masterAddr := net.JoinHostPort(res[0], res[1])
-+   return masterAddr, nil
++	res, err := redis.Strings(conn.Do("SENTINEL", "get-master-addr-by-name", masterName))
++	if err != nil {
++		return "", err
++	}
++	if len(res) < 2 {
++		return "", errors.New("redigo: malformed get-master-addr-by-name reply")
++	}
++	masterAddr := net.JoinHostPort(res[0], res[1])
++	return masterAddr, nil
 +}
 +
 +func queryForSlaveAddrs(conn redis.Conn, masterName string) ([]string, error) {
-+   slaves, err := queryForSlaves(conn, masterName)
-+   if err != nil {
-+       return nil, err
-+   }
-+   slaveAddrs := make([]string, 0)
-+   for _, slave := range slaves {
-+       slaveAddrs = append(slaveAddrs, slave.Addr())
-+   }
-+   return slaveAddrs, nil
++	slaves, err := queryForSlaves(conn, masterName)
++	if err != nil {
++		return nil, err
++	}
++	slaveAddrs := make([]string, 0)
++	for _, slave := range slaves {
++		slaveAddrs = append(slaveAddrs, slave.Addr())
++	}
++	return slaveAddrs, nil
 +}
 +
 +func queryForSlaves(conn redis.Conn, masterName string) ([]*Slave, error) {
-+   res, err := redis.Values(conn.Do("SENTINEL", "slaves", masterName))
-+   if err != nil {
-+       return nil, err
-+   }
-+   slaves := make([]*Slave, 0)
-+   for _, a := range res {
-+       sm, err := redis.StringMap(a, err)
-+       if err != nil {
-+           return slaves, err
-+       }
-+       slave := &Slave{
-+           ip:    sm["ip"],
-+           port:  sm["port"],
-+           flags: sm["flags"],
-+       }
-+       slaves = append(slaves, slave)
-+   }
-+   return slaves, nil
++	res, err := redis.Values(conn.Do("SENTINEL", "slaves", masterName))
++	if err != nil {
++		return nil, err
++	}
++	slaves := make([]*Slave, 0)
++	for _, a := range res {
++		sm, err := redis.StringMap(a, err)
++		if err != nil {
++			return slaves, err
++		}
++		slave := &Slave{
++			ip:    sm["ip"],
++			port:  sm["port"],
++			flags: sm["flags"],
++		}
++		slaves = append(slaves, slave)
++	}
++	return slaves, nil
 +}
 +
 +func queryForSentinels(conn redis.Conn, masterName string) ([]string, error) {
-+   res, err := redis.Values(conn.Do("SENTINEL", "sentinels", masterName))
-+   if err != nil {
-+       return nil, err
-+   }
-+   sentinels := make([]string, 0)
-+   for _, a := range res {
-+       sm, err := redis.StringMap(a, err)
-+       if err != nil {
-+           return sentinels, err
-+       }
-+       sentinels = append(sentinels, fmt.Sprintf("%s:%s", sm["ip"], sm["port"]))
-+   }
-+   return sentinels, nil
++	res, err := redis.Values(conn.Do("SENTINEL", "sentinels", masterName))
++	if err != nil {
++		return nil, err
++	}
++	sentinels := make([]string, 0)
++	for _, a := range res {
++		sm, err := redis.StringMap(a, err)
++		if err != nil {
++			return sentinels, err
++		}
++		sentinels = append(sentinels, fmt.Sprintf("%s:%s", sm["ip"], sm["port"]))
++	}
++	return sentinels, nil
 +}
 +
 +func stringInSlice(str string, slice []string) bool {
-+   for _, s := range slice {
-+       if s == str {
-+           return true
-+       }
-+   }
-+   return false
++	for _, s := range slice {
++		if s == str {
++			return true
++		}
++	}
++	return false
 +}
