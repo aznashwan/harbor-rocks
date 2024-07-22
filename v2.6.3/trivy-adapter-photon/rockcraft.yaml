@@ -56,7 +56,7 @@ parts:
     plugin: go
     source-type: git
     source: https://github.com/aquasecurity/trivy
-    source-tag: v0.50.1
+    source-tag: v0.35.0
     source-depth: 1
     override-build: |
       export GOOS=linux
@@ -78,7 +78,7 @@ parts:
     plugin: go
     source-type: git
     source: https://github.com/aquasecurity/harbor-scanner-trivy
-    source-tag: v0.30.23
+    source-tag: v0.30.6
     source-depth: 1
     override-build: |
       export GOOS=linux
