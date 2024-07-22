@@ -16,7 +16,7 @@ LOG.addHandler(logging.FileHandler(f"{__name__}.log"))
 LOG.addHandler(logging.StreamHandler(sys.stdout))
 
 IMAGE_NAME = "nginx-photon"
-IMAGE_VERSIONS = ["v2.9.3", "v2.10.2"]
+IMAGE_VERSIONS = ["v2.6.3", "v2.9.3", "v2.10.2"]
 
 
 @pytest.mark.abort_on_fail
