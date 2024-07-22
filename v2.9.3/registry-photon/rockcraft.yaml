@@ -57,7 +57,7 @@ parts:
     plugin: go
     source-type: git
     source: https://github.com/distribution/distribution.git
-    source-tag: v2.8.3
+    source-tag: v2.8.2
     source-depth: 1
     override-build: |
       git apply --ignore-whitespace $CRAFT_PROJECT_DIR/redis.patch
