@@ -6,13 +6,16 @@
 import pytest
 
 from k8s_test_harness import harness
+from k8s_test_harness.util import constants
 from k8s_test_harness.util import env_util
 from k8s_test_harness.util import exec_util
+from k8s_test_harness.util import k8s_util
 from k8s_test_harness.util import platform_util
 
 
 CHART_RELEASE_URL = (
     "https://github.com/goharbor/harbor-helm/archive/refs/tags/v1.15.0.tar.gz")
+INSTALL_NAME = "harbor"
 
 # This mapping indicates which fields of the upstream Harbor Helm chart
 # contain the 'image' fields which should be overriden with the ROCK
@@ -68,19 +71,16 @@ def test_harbor_chart_deployment(module_instance: harness.Instance):
         "k8s",
         "helm",
         "install",
-        "harbor",
+        INSTALL_NAME,
         CHART_RELEASE_URL,
     ]
     helm_command.extend(all_chart_value_overrides_args)
 
     module_instance.exec(helm_command)
 
-    exec_util.stubbornly(retries=3, delay_s=1).on(module_instance).exec(
-        [
-            "sudo",
-            "k8s",
-            "helm",
-            "status",
-            "harbor"
-        ]
-    )
+    deployments = [
+        "harbor-core", "harbor-jobservice", "harbor-portal", "harbor-registry"]
+    for deployment in deployments:
+        k8s_util.wait_for_deployment(
+            module_instance, deployment,
+            condition=constants.K8S_CONDITION_AVAILABLE)
