@@ -83,13 +83,8 @@ parts:
       node -e "const yaml = require('js-yaml'); const fs = require('fs'); const swagger = yaml.load(fs.readFileSync('swagger.yaml', 'utf8')); fs.writeFileSync('swagger.json', JSON.stringify(swagger));"
       cp $CRAFT_PART_SRC/LICENSE dist/
 
-      cd app-swagger-ui
-      npm install --unsafe-perm
-      npm run build
-
       mkdir -p $CRAFT_PART_INSTALL/usr/share/nginx/html
       cp -r $CRAFT_PART_BUILD/src/portal/dist/* $CRAFT_PART_INSTALL/usr/share/nginx/html/
       cp $CRAFT_PART_BUILD/src/portal/swagger.json $CRAFT_PART_INSTALL/usr/share/nginx/html/
-      cp -r $CRAFT_PART_BUILD/src/portal/app-swagger-ui/dist/* $CRAFT_PART_INSTALL/usr/share/nginx/html/
 
       chown -R 10000:10000 $CRAFT_PART_INSTALL/usr/share/nginx/html
