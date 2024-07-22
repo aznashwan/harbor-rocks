@@ -51,7 +51,7 @@ parts:
     plugin: nil
     build-snaps:
       # https://github.com/goharbor/harbor/blob/v2.6.3/Makefile#L143
-      - go/1.21/stable
+      - go/1.18/stable
     build-packages:
       - make
 
@@ -93,7 +93,7 @@ parts:
   build-registry-binary:
     after: [create-harbor-user]
     build-snaps:
-      - go/1.21/stable
+      - go/1.18/stable
     plugin: go
     source-type: git
     source: https://github.com/distribution/distribution.git
