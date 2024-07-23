@@ -43,27 +43,9 @@ environment:
 
 services:
 
-  # HACK(aznashwan): the upstream image's entrypoint calls `initdb.sh`,
-  # which in turn calls postgres' `initdb` with a hardcoded en_US.UTF-8 locale:
-  # https://github.com/goharbor/harbor/blob/v2.10.2/make/photon/db/initdb.sh#L34
-  # Because we can't run any of the commands from the `locales` package within
-  # the primed filesystem's context (they'll just change locale settings on
-  # the build host), and locale-related files are apparently excluded
-  # from the final image (1), we have to set this up as its own service:
-  # (1): https://github.com/canonical/craft-parts/blob/1.33.0/craft_parts/packages/deb.py#L140
-  locale_setup:
-    startup: enabled
-    override: replace
-    command: bash -c "apt-get update && apt-get install -y language-pack-en-base"
-    on-success: ignore
-    user: root
-    group: root
-
   harbor_db:
     startup: enabled
     override: replace
-    requires:
-      - locale_setup
 
     # NOTE(aznashwan) set docker-entrypoint.sh for compatibility with upstream image.
     # It takes as arguments the older and current ProstgreSQL versions to start:
@@ -108,17 +90,13 @@ parts:
       - bc
       - util-linux
       - net-tools
-      # HACK(aznashwan): the upstream image's entrypoint calls `initdb.sh`,
+
+    overlay-packages:
+      # NOTE(aznashwan): the upstream image's entrypoint calls `initdb.sh`,
       # which in turn calls postgres' `initdb` with a hardcoded en_US.UTF-8 locale:
       # https://github.com/goharbor/harbor/blob/v2.10.2/make/photon/db/initdb.sh#L34
-      # Because we can't run any of the commands from the `locales` package within
-      # the primed filesystem's context (they'll just change locale settings on
-      # the build host), we simply stage this umbrella package for English:
-      #
-      # Doesn't seem to work due to `locales` being explicitly excluded:
-      # https://github.com/canonical/craft-parts/blob/1.33.0/craft_parts/packages/deb.py#L140
-      # - locales
-      # - language-pack-en-base
+      - locales
+      - language-pack-en-base
 
     override-build: |
       set -eux
