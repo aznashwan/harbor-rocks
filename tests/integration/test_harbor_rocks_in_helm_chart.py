@@ -3,6 +3,10 @@
 # See LICENSE file for licensing details
 #
 
+import json
+import logging
+import sys
+
 import pytest
 
 from k8s_test_harness import harness
@@ -10,6 +14,12 @@ from k8s_test_harness.util import constants
 from k8s_test_harness.util import env_util
 from k8s_test_harness.util import k8s_util
 from k8s_test_harness.util import platform_util
+
+
+LOG: logging.Logger = logging.getLogger(__name__)
+
+LOG.addHandler(logging.FileHandler(f"{__name__}.log"))
+LOG.addHandler(logging.StreamHandler(sys.stdout))
 
 
 IMAGE_VERSIONS = ["v2.6.3", "v2.9.3", "v2.10.2"]
@@ -46,6 +56,12 @@ def test_harbor_chart_deployment(
     all_chart_value_overrides_args = []
     found_env_rocks_metadata = []
     all_rocks_meta_info = env_util.get_rocks_meta_info_from_env()
+
+    # NOTE(aznashwan): GitHub actions UI sometimes truncates env values:
+    LOG.info(
+        f"All built rocks metadata from env was: "
+        f"{json.dumps([rmi.__dict__ for rmi in all_rocks_meta_info])}")
+
     for rmi in all_rocks_meta_info:
         if rmi.name in IMAGE_NAMES_TO_CHART_VALUES_OVERRIDES_MAP and (
                 rmi.version == image_version and rmi.arch == architecture):
