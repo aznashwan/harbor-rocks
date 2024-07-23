@@ -63,28 +63,35 @@ parts:
     source: https://github.com/goharbor/harbor
     source-tag: v2.6.3
     source-depth: 1
+    build-packages:
+      - python3-yaml
     build-snaps:
-      - node/18/stable
+      - node/16/stable
     override-build: |
-      cd $CRAFT_PART_BUILD/src/portal
-      cp $CRAFT_PART_SRC/api/v2.0/swagger.yaml .
+      OUTDIR="$CRAFT_PART_BUILD/build_dir"
+      mkdir -p "$OUTDIR"
 
-      export NPM_CONFIG_REGISTRY=https://registry.npmjs.org
+      cd "$CRAFT_PART_SRC"
+      cp ./src/portal/package.json "$OUTDIR/"
+      cp ./src/portal/package-lock.json "$OUTDIR/"
+      cp -r ./src/portal/scripts "$OUTDIR/"
 
-      # https://github.com/cypress-io/cypress-documentation/issues/5868
-      npm install cypress --save-dev --foreground-scripts
+      cp ./api/v2.0/legacy_swagger.yaml "$OUTDIR/swagger.yaml"
+      cp ./api/v2.0/swagger.yaml "$OUTDIR/swagger2.yaml"
+      cp ./api/swagger.yaml "$OUTDIR/swagger3.yaml"
+      cp -r ./src/portal "$OUTDIR"
 
+      cd "$OUTDIR"
       npm install --unsafe-perm
       npm run generate-build-timestamp
-      node --max_old_space_size=2048 \
-        'node_modules/@angular/cli/bin/ng' \
-        build --configuration production
-      npm install js-yaml@4.1.0
-      node -e "const yaml = require('js-yaml'); const fs = require('fs'); const swagger = yaml.load(fs.readFileSync('swagger.yaml', 'utf8')); fs.writeFileSync('swagger.json', JSON.stringify(swagger));"
-      cp $CRAFT_PART_SRC/LICENSE dist/
 
-      mkdir -p $CRAFT_PART_INSTALL/usr/share/nginx/html
-      cp -r $CRAFT_PART_BUILD/src/portal/dist/* $CRAFT_PART_INSTALL/usr/share/nginx/html/
-      cp $CRAFT_PART_BUILD/src/portal/swagger.json $CRAFT_PART_INSTALL/usr/share/nginx/html/
+      node --max_old_space_size=2048 'node_modules/@angular/cli/bin/ng' build --configuration production
+      python -c 'import sys, yaml, json; y=yaml.load(sys.stdin.read()); print json.dumps(y)' < "$OUTDIR/swagger.yaml" > "$OUTDIR/dist/swagger.json"
+      python -c 'import sys, yaml, json; y=yaml.load(sys.stdin.read()); print json.dumps(y)' < "$OUTDIR/swagger2.yaml" > "$OUTDIR/dist/swagger2.json"
+      python -c 'import sys, yaml, json; y=yaml.load(sys.stdin.read()); print json.dumps(y)' < "$OUTDIR/swagger3.yaml" > "$OUTDIR/dist/swagger3.json"
 
-      chown -R 10000:10000 $CRAFT_PART_INSTALL/usr/share/nginx/html
+      cp "$OUTDIR/swagger.yaml" "$OUTDIR/dist/"
+      cp "$CRAFT_PART_SRC/LICENSE" "$OUTDIR/dist"
+
+      cp -r "$OUTDIR/dist/*" "$CRAFT_PART_INSTALL/usr/share/nginx/html/"
+      cp -r "$OUTDIR/package*.json" "$CRAFT_PART_INSTALL/usr/share/nginx/"
