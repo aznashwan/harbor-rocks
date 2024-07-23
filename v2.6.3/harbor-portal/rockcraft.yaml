@@ -79,9 +79,10 @@ parts:
       cp ./api/v2.0/legacy_swagger.yaml "$OUTDIR/swagger.yaml"
       cp ./api/v2.0/swagger.yaml "$OUTDIR/swagger2.yaml"
       cp ./api/swagger.yaml "$OUTDIR/swagger3.yaml"
-      cp -r ./src/portal "$OUTDIR"
+      cp -r ./src/portal "$OUTDIR/"
 
       cd "$OUTDIR"
+      mkdir -p "$OUTDIR/dist"
       npm install --unsafe-perm
       npm run generate-build-timestamp
 
@@ -93,5 +94,6 @@ parts:
       cp "$OUTDIR/swagger.yaml" "$OUTDIR/dist/"
       cp "$CRAFT_PART_SRC/LICENSE" "$OUTDIR/dist"
 
+      mkdir -p "$CRAFT_PART_INSTALL/usr/share/nginx/html/"
       cp -r "$OUTDIR/dist/*" "$CRAFT_PART_INSTALL/usr/share/nginx/html/"
       cp -r "$OUTDIR/package*.json" "$CRAFT_PART_INSTALL/usr/share/nginx/"
