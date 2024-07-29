@@ -94,6 +94,12 @@ def test_harbor_chart_deployment(
         "install",
         INSTALL_NAME,
         CHART_RELEASE_URL,
+        # HACK(aznashwan): try to reduce some PVC's size to see
+        # if affects the provisioning on the GH runners:
+        "--set",
+        "persistence.persistentVolumeClaim.trivy.size=1Gi",
+        "--set",
+        "persistence.persistentVolumeClaim.registry.size=1Gi",
     ]
     helm_command.extend(all_chart_value_overrides_args)
 
@@ -107,7 +113,7 @@ def test_harbor_chart_deployment(
     # HACK(aznashwan): the `harbor-trivy` StatefulSet should be in this list
     # too, but it consistently fails to have its PVC provisioned on the GitHub
     # amd64 runners despite it seemingly working consistently in local testing.
-    stateful_sets = ["harbor-database", "harbor-redis"]
+    stateful_sets = ["harbor-trivy", "harbor-database", "harbor-redis"]
     for stateful_set in stateful_sets:
         k8s_util.wait_for_statefulset(
             function_instance,
