@@ -109,7 +109,6 @@ def test_harbor_chart_deployment(
         k8s_util.wait_for_statefulset(
             function_instance,
             stateful_set,
-            condition=constants.K8S_CONDITION_AVAILABLE,
             **retry_kwargs,
         )
 
